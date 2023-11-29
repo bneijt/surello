@@ -1,7 +1,7 @@
 use std::env::var;
 use std::f32::consts::E;
 extern crate dotenv;
-
+use csv;
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,6 +11,7 @@ use surrealdb::sql::Object;
 use surrealdb::{Response, Surreal};
 use tokio;
 use walkdir::{DirEntry, WalkDir};
+extern crate serde_json;
 
 use clap::Parser;
 use std::collections::HashMap;
@@ -50,10 +51,18 @@ async fn main() {
     load_datas(&db).await.unwrap();
 }
 
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SurelloSourceType {
+    Surql,
+    Csv,
+    Parquet,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct SurelloHistoryEntry {
-    source_name: String,
-    source_type: String,
+    source_path: String,
+    source_type: SurelloSourceType,
     execution_datetime_utc: String,
     execution_result: String,
 }
@@ -64,7 +73,63 @@ struct Record {
     id: Thing,
 }
 
-pub async fn load_datas(db_client: &Surreal<Client>) -> Result<(), Box<dyn Error>> {
+pub async fn load_csv(db_client: &Surreal<Client>, path: &Path) -> Result<(), Box<dyn Error>> {
+    // This introduces a type alias so that we can conveniently reference our
+    // record type.
+    type Record = HashMap<String, String>;
+
+    let mut rdr = csv::Reader::from_path(path)?;
+    for result in rdr.deserialize() {
+        let record: Record = result?;
+        println!("{:?}", record);
+    }
+    Ok(())
+}
+fn determine_target(path: &Path) -> Option<SurelloSourceType> {
+    let extension = path.extension().unwrap().to_str().unwrap();
+    match extension {
+        "surql" => Some(SurelloSourceType::Surql),
+        "csv" => Some(SurelloSourceType::Csv),
+        _ => None,
+    }
+}
+
+async fn register_as_done(
+    db_client: &Surreal<Client>,
+    source_path: &Path,
+    source_type: SurelloSourceType,
+    response: &str,
+) -> Result<(), surrealdb::Error> {
+    db_client
+        .create("surello_history")
+        .content(SurelloHistoryEntry {
+            source_path: source_path.to_str().unwrap().to_string(),
+            source_type: source_type,
+            execution_datetime_utc: chrono::Utc::now().to_rfc3339(),
+            execution_result: response.to_string(),
+        })
+        .await
+        .map(|_: Vec<Record>| ())
+}
+
+async fn load_surql(
+    db_client: &Surreal<Client>,
+    source_path: &Path,
+) -> Result<(), surrealdb::Error> {
+    let statements: String = fs::read_to_string(source_path).unwrap();
+
+    println!("Executing {}", source_path.display());
+    let response = db_client.query(statements).await;
+    match response {
+        Ok(response) => {
+            println!("Response: {:?}", response);
+            register_as_done(db_client, source_path, SurelloSourceType::Surql, "ok").await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub async fn load_datas(db_client: &Surreal<Client>) -> Result<(), surrealdb::Error> {
     //Go through the tables in db folder and create them in the database
     // recursively walk directory db for all .rusql files
     // for each file, create a table with the name of the file
@@ -75,58 +140,41 @@ pub async fn load_datas(db_client: &Surreal<Client>) -> Result<(), Box<dyn Error
     for entry in walker {
         let dir_entry = entry.unwrap();
         if dir_entry.file_type().is_file() {
-            if dir_entry.file_name().to_str().unwrap().ends_with(".surql") {
-                println!("Found {}", dir_entry.path().display());
-                let source_name = dir_entry.file_name().to_str().unwrap();
-                let source_type = "surql";
+            let source_path = dir_entry.path();
+            let maybe_target = determine_target(source_path);
 
-                //Check if this source_name, source_type is already in the surrello_history table
-                let historic_execution = surello_history.iter().find(|history_entry| {
-                    history_entry.source_name == source_name
-                        && history_entry.source_type == source_type
-                });
-                match historic_execution {
-                    Some(execution  ) => {
-                        println!("Skipping {} {} because it was previously executed at {}", source_name, source_type, execution.execution_datetime_utc);
-                        continue;
-                    }
-                    None => {}
-                    
-                }
-
-                let statements: String = fs::read_to_string(dir_entry.path())?;
-
-                println!("Executing {} {}", source_name, source_type);
-                let response = db_client.query(statements).await;
-                match response {
-                    Ok(response) => {
-                        println!("Response: {:?}", response);
-                        let _created: Vec<Record> = db_client
-                            .create("surello_history")
-                            .content(SurelloHistoryEntry {
-                                source_name: source_name.to_string(),
-                                source_type: source_type.to_string(),
-                                execution_datetime_utc: chrono::Utc::now().to_rfc3339(),
-                                execution_result: format!("{:?}", response).to_string(),
-                            })
-                            .await
-                            .unwrap();
-                        // dbg!(&created);
-                    }
-                    Err(e) => {
-                        println!("Error: {:?}", e);
-                        // db_client
-                        //     .create(("surello_history", source_name))
-                        //     .content(SurelloHistoryEntry {
-                        //         source_name,
-                        //         source_type,
-                        //         execution_datetime_utc: "execution_datetime_utc",
-                        //         execution_status: false,
-                        //     })
-                        //     .await
-                        //     .unwrap();
+            match maybe_target {
+                Some(source_type) => {
+                    let historic_execution = surello_history.iter().find(|history_entry| {
+                        history_entry.source_path == source_path.display().to_string()
+                            && history_entry.source_type == source_type
+                    });
+                    match historic_execution {
+                        Some(execution) => {
+                            println!(
+                                "Skipping {} because it was previously executed at {}",
+                                dir_entry.path().display(),
+                                execution.execution_datetime_utc
+                            );
+                            continue;
+                        }
+                        None => match source_type {
+                            SurelloSourceType::Surql => {
+                                load_surql(&db_client, source_path).await;
+                                ()
+                            }
+                            SurelloSourceType::Csv => {
+                                load_csv(&db_client, source_path).await;
+                                ()
+                            }
+                            SurelloSourceType::Parquet => todo!(),
+                        },
                     }
                 }
+                None => println!(
+                    "Unsupported type or unknown file: {}",
+                    dir_entry.path().display()
+                ),
             }
         }
     }
