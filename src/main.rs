@@ -73,15 +73,30 @@ struct Record {
     id: Thing,
 }
 
-pub async fn load_csv(db_client: &Surreal<Client>, path: &Path) -> Result<(), Box<dyn Error>> {
+pub async fn load_csv(
+    db_client: &Surreal<Client>,
+    source_path: &Path,
+) -> Result<(), Box<dyn Error>> {
     // This introduces a type alias so that we can conveniently reference our
     // record type.
-    type Record = HashMap<String, String>;
 
-    let mut rdr = csv::Reader::from_path(path)?;
+    let mut rdr = csv::Reader::from_path(source_path)?;
     for result in rdr.deserialize() {
-        let record: Record = result?;
-        println!("{:?}", record);
+        let record: HashMap<String, String> = result?;
+        db_client
+            .create(format!(
+                "file_{}",
+                source_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .replace(".", "_")
+            ))
+            .content(record)
+            .await
+            .map(|_: Vec<Record>| ())
+            .unwrap();
     }
     Ok(())
 }
