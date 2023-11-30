@@ -8,17 +8,15 @@ use serde::{Deserialize, Serialize};
 use surrealdb::engine::remote::ws::{Client, Ws};
 use surrealdb::opt::auth::Root;
 
-use surrealdb::{Surreal};
+use surrealdb::Surreal;
 
-use walkdir::{WalkDir};
+use walkdir::WalkDir;
 extern crate serde_json;
 
 use clap::Parser;
 use std::collections::HashMap;
 
-
 use std::fs;
-
 
 use std::path::Path;
 use surrealdb::sql::Thing;
@@ -176,11 +174,9 @@ pub async fn load_datas(db_client: &Surreal<Client>) -> Result<(), surrealdb::Er
                         None => match source_type {
                             SurelloSourceType::Surql => {
                                 load_surql(db_client, source_path).await.unwrap();
-                                
                             }
                             SurelloSourceType::Csv => {
                                 load_csv(db_client, source_path).await.unwrap();
-                                
                             }
                             SurelloSourceType::Parquet => todo!(),
                         },
