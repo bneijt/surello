@@ -1,25 +1,25 @@
 use std::env::var;
-use std::f32::consts::E;
+
 extern crate dotenv;
-use csv;
+
 use dotenv::dotenv;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+
 use surrealdb::engine::remote::ws::{Client, Ws};
 use surrealdb::opt::auth::Root;
-use surrealdb::sql::Object;
-use surrealdb::{Response, Surreal};
-use tokio;
-use walkdir::{DirEntry, WalkDir};
+
+use surrealdb::{Surreal};
+
+use walkdir::{WalkDir};
 extern crate serde_json;
 
 use clap::Parser;
 use std::collections::HashMap;
-use std::error::Error;
-use std::ffi::OsStr;
+
+
 use std::fs;
-use std::fs::File;
-use std::io::BufReader;
+
+
 use std::path::Path;
 use surrealdb::sql::Thing;
 
@@ -90,7 +90,7 @@ pub async fn load_csv(
                     .unwrap()
                     .to_str()
                     .unwrap()
-                    .replace(".", "_")
+                    .replace('.', "_")
             ))
             .content(record)
             .await
@@ -119,7 +119,7 @@ async fn register_as_done(
         .create("surello_history")
         .content(SurelloHistoryEntry {
             source_path: source_path.to_str().unwrap().to_string(),
-            source_type: source_type,
+            source_type,
             execution_datetime_utc: chrono::Utc::now().to_rfc3339(),
             execution_result: response.to_string(),
         })
@@ -175,12 +175,12 @@ pub async fn load_datas(db_client: &Surreal<Client>) -> Result<(), surrealdb::Er
                         }
                         None => match source_type {
                             SurelloSourceType::Surql => {
-                                load_surql(&db_client, source_path).await;
-                                ()
+                                load_surql(db_client, source_path).await.unwrap();
+                                
                             }
                             SurelloSourceType::Csv => {
-                                load_csv(&db_client, source_path).await;
-                                ()
+                                load_csv(db_client, source_path).await.unwrap();
+                                
                             }
                             SurelloSourceType::Parquet => todo!(),
                         },
