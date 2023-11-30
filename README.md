@@ -7,7 +7,7 @@ Commandline tool to get started with data in SurrealDB by allowing you to simply
 
 Surello goals:
 - [x] Execute scripts
-- [ ] Load CSV files
+- [x] Load CSV files
 - [ ] Load Parquet files
 - [x] Keep a list of executed and loaded files
 - [ ] Hash input so you can verify changes

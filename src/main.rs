@@ -76,13 +76,12 @@ struct Record {
 pub async fn load_csv(
     db_client: &Surreal<Client>,
     source_path: &Path,
-) -> Result<(), Box<dyn Error>> {
-    // This introduces a type alias so that we can conveniently reference our
-    // record type.
+) -> Result<(), surrealdb::Error> {
+    println!("Loading {}", source_path.display());
 
-    let mut rdr = csv::Reader::from_path(source_path)?;
+    let mut rdr = csv::Reader::from_path(source_path).unwrap();
     for result in rdr.deserialize() {
-        let record: HashMap<String, String> = result?;
+        let record: HashMap<String, String> = result.unwrap();
         db_client
             .create(format!(
                 "file_{}",
@@ -98,8 +97,9 @@ pub async fn load_csv(
             .map(|_: Vec<Record>| ())
             .unwrap();
     }
-    Ok(())
+    register_as_done(db_client, source_path, SurelloSourceType::Csv, "ok").await
 }
+
 fn determine_target(path: &Path) -> Option<SurelloSourceType> {
     let extension = path.extension().unwrap().to_str().unwrap();
     match extension {
