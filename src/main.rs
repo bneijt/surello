@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use surrealdb::engine::remote::ws::{Client, Ws};
 use surrealdb::opt::auth::Root;
 
+use serde_jsonlines::json_lines;
 use surrealdb::Surreal;
 
 use walkdir::WalkDir;
@@ -55,6 +56,7 @@ pub enum SurelloSourceType {
     Surql,
     Csv,
     Parquet,
+    JsonLines,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,11 +100,37 @@ pub async fn load_csv(
     register_as_done(db_client, source_path, SurelloSourceType::Csv, "ok").await
 }
 
+pub async fn load_json_lines(
+    db_client: &Surreal<Client>,
+    source_path: &Path,
+) -> Result<(), surrealdb::Error> {
+    println!("Loading {}", source_path.display());
+    for result in json_lines(source_path).unwrap() {
+        let record: HashMap<String, String> = result.unwrap();
+        db_client
+            .create(format!(
+                "file_{}",
+                source_path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .replace('.', "_")
+            ))
+            .content(record)
+            .await
+            .map(|_: Vec<Record>| ())
+            .unwrap();
+    }
+    register_as_done(db_client, source_path, SurelloSourceType::JsonLines, "ok").await
+}
+
 fn determine_target(path: &Path) -> Option<SurelloSourceType> {
     let extension = path.extension().unwrap().to_str().unwrap();
     match extension {
         "surql" => Some(SurelloSourceType::Surql),
         "csv" => Some(SurelloSourceType::Csv),
+        "jsonl" => Some(SurelloSourceType::JsonLines),
         _ => None,
     }
 }
@@ -179,6 +207,9 @@ pub async fn load_datas(db_client: &Surreal<Client>) -> Result<(), surrealdb::Er
                                 load_csv(db_client, source_path).await.unwrap();
                             }
                             SurelloSourceType::Parquet => todo!(),
+                            SurelloSourceType::JsonLines => {
+                                load_json_lines(db_client, source_path).await.unwrap()
+                            }
                         },
                     }
                 }
